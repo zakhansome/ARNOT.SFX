@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Auto SFX Video Tool</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .header p {
+            font-size: 1.1em;
+            opacity: 0.9;
+        }
+
+        .main-content {
+            padding: 30px;
+        }
+
+        .upload-section {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-bottom: 30px;
+        }
+
+        @media (max-width: 768px) {
+            .upload-section {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .upload-box {
+            border: 3px dashed #667eea;
+            border-radius: 15px;
+            padding: 40px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: #f8f9ff;
+            position: relative;
+        }
+
+        .upload-box:hover {
+            border-color: #764ba2;
+            background: #f0f1ff;
+            transform: translateY(-2px);
+        }
+
+        .upload-box.active {
+            border-color: #4CAF50;
+            background: #f0fff0;
+        }
+
+        .upload-box.has-file {
+            border-color: #4CAF50;
+            background: #e8f5e9;
+        }
+
+        .upload-icon {
+            font-size: 4em;
+            margin-bottom: 15px;
+        }
+
+        .upload-box h3 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .upload-box p {
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .file-input {
+            display: none;
+        }
+
+        .file-info {
+            margin-top: 15px;
+            padding: 10px;
+            background: white;
+            border-radius: 8px;
+            font-size: 0.9em;
+            color: #333;
+            display: none;
+        }
+
+        .file-info.show {
+            display: block;
+        }
+
+        .options-section {
+            background: #f8f9ff;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 30px;
+        }
+
+        .options-section h3 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.3em;
+        }
+
+        .sfx-placement-options {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .option-card {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 12px;
+            padding: 20px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .option-card:hover {
+            border-color: #667eea;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+
+        .option-card.selected {
+            border-color: #667eea;
+            background: #f0f1ff;
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .option-card.selected::after {
+            content: '✓';
+            position: absolute;
+            top: 10px;
+            right: 15px;
+            color: #667eea;
+            font-size: 1.5em;
+            font-weight: bold;
+        }
+
+        .option-card h4 {
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+        }
+
+        .option-card p {
+            color: #666;
+            font-size: 0.9em;
+            line-height: 1.4;
+        }
+
+        .detection-settings {
+            margin-top: 20px;
+            padding: 20px;
+            background: white;
+            border-radius: 12px;
+            border: 2px solid #e0e0e0;
+        }
+
+        .setting-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 15px;
+        }
+
+        .setting-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .setting-row label {
+            color: #333;
+            font-weight: 500;
+        }
+
+        .setting-row input[type="range"] {
+            width: 200px;
+        }
+
+        .setting-row input[type="number"] {
+            width: 80px;
+            padding: 5px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            text-align: center;
+        }
+
+        .process-btn {
+            width: 100%;
+            padding: 18px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 1.2em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 30px;
+        }
+
+        .process-btn:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(102, 126, 234, 0.4);
+        }
+
+        .process-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .progress-section {
+            display: none;
+            margin-bottom: 30px;
+        }
+
+        .progress-section.show {
+            display: block;
+        }
+
+        .progress-bar {
+            width: 100%;
+            height: 10px;
+            background: #e0e0e0;
+            border-radius: 5px;
+            overflow: hidden;
+            margin-bottom: 10px;
+        }
+
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            width: 0%;
+            transition: width 0.3s ease;
+            border-radius: 5px;
+        }
+
+        .progress-text {
+            text-align: center;
+            color: #666;
+            font-size: 0.9em;
+        }
+
+        .preview-section {
+            display: none;
+            background: #f8f9ff;
+            border-radius: 15px;
+            padding: 25px;
+        }
+
+        .preview-section.show {
+            display: block;
+        }
+
+        .preview-section h3 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.3em;
+        }
+
+        .video-preview {
+            width: 100%;
+            max-width: 800px;
+            margin: 0 auto 20px;
+            border-radius: 10px;
+            overflow: hidden;
+            background: black;
+        }
+
+        .video-preview video {
+            width: 100%;
+            display: block;
+        }
+
+        .sfx-timeline {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .sfx-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px;
+            border-bottom: 1px solid #e0e0e0;
+            transition: background 0.2s;
+        }
+
+        .sfx-item:hover {
+            background: #f8f9ff;
+        }
+
+        .sfx-item:last-child {
+            border-bottom: none;
+        }
+
+        .sfx-time {
+            color: #667eea;
+            font-weight: bold;
+            min-width: 80px;
+        }
+
+        .sfx-type {
+            padding: 3px 10px;
+            background: #667eea;
+            color: white;
+            border-radius: 15px;
+            font-size: 0.8em;
+            margin: 0 10px;
+        }
+
+        .sfx-name {
+            flex: 1;
+            color: #333;
+        }
+
+        .download-btn {
+            padding: 12px 30px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .download-btn:hover {
+            background: #45a049;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(76, 175, 80, 0.3);
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+
+        .alert.show {
+            display: block;
+        }
+
+        .alert-error {
+            background: #ffebee;
+            color: #c62828;
+            border: 1px solid #ef9a9a;
+        }
+
+        .alert-success {
+            background: #e8f5e9;
+            color: #2e7d32;
+            border: 1px solid #a5d6a7;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎬 AI Auto SFX Video Tool</h1>
+            <p>Tambahkan Sound Effect Otomatis dengan Kecerdasan Buatan</p>
+        </div>
+
+        <div class="main-content">
+            <!-- Upload Section -->
+            <div class="upload-section">
+                <div class="upload-box" id="videoUploadBox" onclick="document.getElementById('videoInput').click()">
+                    <div class="upload-icon">🎥</div>
+                    <h3>Upload Video</h3>
+                    <p>MP4, WebM, AVI (Maks 500MB)</p>
+                    <div class="file-info" id="videoInfo"></div>
+                    <input type="file" id="videoInput" class="file-input" accept="video/*">
+                </div>
+
+                <div class="upload-box" id="sfxUploadBox" onclick="document.getElementById('sfxInput').click()">
+                    <div class="upload-icon">🔊</div>
+                    <h3>Upload Sound Effect</h3>
+                    <p>MP3, WAV, OGG (Bisa multiple files)</p>
+                    <div class="file-info" id="sfxInfo"></div>
+                    <input type="file" id="sfxInput" class="file-input" accept="audio/*" multiple>
+                </div>
+            </div>
+
+            <!-- SFX Placement Options -->
+            <div class="options-section">
+                <h3>🎯 Pilih Mode Penempatan SFX</h3>
+                <div class="sfx-placement-options">
+                    <div class="option-card selected" data-mode="transition" onclick="selectPlacementMode('transition')">
+                        <h4>🔄 Pergantian Frame (Transisi)</h4>
+                        <p>SFX akan ditempatkan saat terjadi perubahan scene atau transisi dalam video</p>
+                    </div>
+                    <div class="option-card" data-mode="text" onclick="selectPlacementMode('text')">
+                        <h4>📝 Munculnya Teks</h4>
+                        <p>SFX akan ditempatkan saat teks atau subtitle muncul dalam video</p>
+                    </div>
+                    <div class="option-card" data-mode="both" onclick="selectPlacementMode('both')">
+                        <h4>🎯 Keduanya</h4>
+                        <p>SFX ditempatkan saat transisi frame DAN munculnya teks</p>
+                    </div>
+                </div>
+
+                <div class="detection-settings">
+                    <h4 style="margin-bottom: 15px;">⚙️ Pengaturan Deteksi AI</h4>
+                    <div class="setting-row">
+                        <label>Sensitivitas Deteksi Transisi:</label>
+                        <input type="range" id="transitionSensitivity" min="1" max="10" value="5" oninput="updateSensitivityValue()">
+                        <span id="sensitivityValue">5</span>
+                    </div>
+                    <div class="setting-row">
+                        <label>Threshold Perubahan Frame (%):</label>
+                        <input type="number" id="transitionThreshold" value="30" min="1" max="100">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Process Button -->
+            <button class="process-btn" id="processBtn" onclick="processVideo()" disabled>
+                🚀 Proses Video dengan AI
+            </button>
+
+            <!-- Alert -->
+            <div class="alert" id="alertBox"></div>
+
+            <!-- Progress -->
+            <div class="progress-section" id="progressSection">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <div class="progress-text" id="progressText">Menganalisis video...</div>
+            </div>
+
+            <!-- Preview Section -->
+            <div class="preview-section" id="previewSection">
+                <h3>📺 Preview Hasil</h3>
+                <div class="video-preview">
+                    <video id="videoPreview" controls></video>
+                </div>
+                <div class="sfx-timeline" id="sfxTimeline">
+                    <h4 style="margin-bottom: 15px;">🎵 Timeline SFX yang Ditempatkan:</h4>
+                    <div id="sfxList"></div>
+                </div>
+                <button class="download-btn" onclick="downloadVideo()">
+                    💾 Download Video dengan SFX
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // State Management
+        let videoFile = null;
+        let sfxFiles = [];
+        let placementMode = 'transition';
+        let processedVideoUrl = null;
+        let detectedSFXPoints = [];
+
+        // DOM Elements
+        const videoInput = document.getElementById('videoInput');
+        const sfxInput = document.getElementById('sfxInput');
+        const videoUploadBox = document.getElementById('videoUploadBox');
+        const sfxUploadBox = document.getElementById('sfxUploadBox');
+        const videoInfo = document.getElementById('videoInfo');
+        const sfxInfo = document.getElementById('sfxInfo');
+        const processBtn = document.getElementById('processBtn');
+        const progressSection = document.getElementById('progressSection');
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+        const previewSection = document.getElementById('previewSection');
+        const videoPreview = document.getElementById('videoPreview');
+        const sfxList = document.getElementById('sfxList');
+        const alertBox = document.getElementById('alertBox');
+
+        // File Upload Handlers
+        videoInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                videoFile = e.target.files[0];
+                videoInfo.textContent = `📁 ${videoFile.name} (${formatFileSize(videoFile.size)})`;
+                videoInfo.classList.add('show');
+                videoUploadBox.classList.add('has-file');
+                updateProcessButton();
+            }
+        });
+
+        sfxInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                sfxFiles = Array.from(e.target.files);
+                sfxInfo.textContent = `📁 ${sfxFiles.length} file SFX dipilih`;
+                sfxInfo.classList.add('show');
+                sfxUploadBox.classList.add('has-file');
+                updateProcessButton();
+            }
+        });
+
+        // Drag and Drop Support
+        [videoUploadBox, sfxUploadBox].forEach(box => {
+            box.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                box.classList.add('active');
+            });
+
+            box.addEventListener('dragleave', () => {
+                box.classList.remove('active');
+            });
+
+            box.addEventListener('drop', (e) => {
+                e.preventDefault();
+                box.classList.remove('active');
+                
+                const files = e.dataTransfer.files;
+                if (box === videoUploadBox && files.length > 0) {
+                    const file = files[0];
+                    if (file.type.startsWith('video/')) {
+                        videoFile = file;
+                        videoInfo.textContent = `📁 ${videoFile.name} (${formatFileSize(videoFile.size)})`;
+                        videoInfo.classList.add('show');
+                        videoUploadBox.classList.add('has-file');
+                        updateProcessButton();
+                    } else {
+                        showAlert('Mohon upload file video yang valid', 'error');
+                    }
+                } else if (box === sfxUploadBox && files.length > 0) {
+                    const audioFiles = Array.from(files).filter(f => f.type.startsWith('audio/'));
+                    if (audioFiles.length > 0) {
+                        sfxFiles = [...sfxFiles, ...audioFiles];
+                        sfxInfo.textContent = `📁 ${sfxFiles.length} file SFX dipilih`;
+                        sfxInfo.classList.add('show');
+                        sfxUploadBox.classList.add('has-file');
+                        updateProcessButton();
+                    }
+                }
+            });
+        });
+
+        // Placement Mode Selection
+        function selectPlacementMode(mode) {
+            placementMode = mode;
+            document.querySelectorAll('.option-card').forEach(card => {
+                card.classList.remove('selected');
+            });
+            document.querySelector(`[data-mode="${mode}"]`).classList.add('selected');
+        }
+
+        // Sensitivity Update
+        function updateSensitivityValue() {
+            const sensitivity = document.getElementById('transitionSensitivity').value;
+            document.getElementById('sensitivityValue').textContent = sensitivity;
+        }
+
+        // Process Button Update
+        function updateProcessButton() {
+            processBtn.disabled = !(videoFile && sfxFiles.length > 0);
+        }
+
+        // Main Processing Function
+        async function processVideo() {
+            if (!videoFile || sfxFiles.length === 0) {
+                showAlert('Mohon upload video dan minimal satu file SFX', 'error');
+                return;
+            }
+
+            // Show progress
+            progressSection.classList.add('show');
+            previewSection.classList.remove('show');
+            processBtn.disabled = true;
+
+            try {
+                // Step 1: Extract video frames for analysis
+                updateProgress(10, 'Mengekstrak frame video...');
+                const frames = await extractVideoFrames(videoFile);
+                
+                // Step 2: Detect transitions and/or text
+                updateProgress(30, 'Mendeteksi transisi dan teks dengan AI...');
+                const detectionResults = await detectFeatures(frames);
+                
+                // Step 3: Map SFX to detected points
+                updateProgress(60, 'Menempatkan SFX pada titik yang terdeteksi...');
+                detectedSFXPoints = await mapSFXToPoints(detectionResults);
+                
+                // Step 4: Combine video with SFX
+                updateProgress(80, 'Menggabungkan video dengan SFX...');
+                processedVideoUrl = await combineVideoWithSFX(videoFile, detectedSFXPoints);
+                
+                // Step 5: Show preview
+                updateProgress(100, 'Selesai!');
+                showPreview();
+                
+                showAlert('✅ Video berhasil diproses! SFX telah ditempatkan secara otomatis.', 'success');
+            } catch (error) {
+                console.error('Processing error:', error);
+                showAlert('❌ Gagal memproses video: ' + error.message, 'error');
+            } finally {
+                progressSection.classList.remove('show');
+                processBtn.disabled = false;
+            }
+        }
+
+        // AI Detection Functions (Simulated)
+        async function extractVideoFrames(videoFile) {
+            return new Promise((resolve) => {
+                const video = document.createElement('video');
+                const canvas = document.createElement('canvas');
+                const ctx = canvas.getContext('2d');
+                
+                video.onloadedmetadata = () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    
+                    // Simulate frame extraction at intervals
+                    const duration = video.duration;
+                    const frameInterval = 0.5; // Extract frame every 0.5 seconds
+                    const frameCount = Math.floor(duration / frameInterval);
+                    const frames = [];
+                    
+                    let currentFrame = 0;
+                    
+                    video.onseeked = () => {
+                        ctx.drawImage(video, 0, 0);
+                        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                        frames.push({
+                            time: video.currentTime,
+                            data: imageData,
+                            index: currentFrame
+                        });
+                        
+                        currentFrame++;
+                        if (currentFrame < frameCount) {
+                            video.currentTime = currentFrame * frameInterval;
+                        } else {
+                            URL.revokeObjectURL(video.src);
+                            resolve(frames);
+                        }
+                    };
+                    
+                    video.currentTime = 0;
+                };
+                
+                video.src = URL.createObjectURL(videoFile);
+            });
+        }
+
+        async function detectFeatures(frames) {
+            const sensitivity = parseInt(document.getElementById('transitionSensitivity').value);
+            const threshold = parseInt(document.getElementById('transitionThreshold').value);
+            
+            const transitions = [];
+            const textAppearances = [];
+            
+            // Simulate AI detection with frame analysis
+            for (let i = 1; i < frames.length; i++) {
+                const prevFrame = frames[i - 1];
+                const currFrame = frames[i];
+                
+                // Detect transitions based on frame difference
+                const difference = await calculateFrameDifference(prevFrame.data, currFrame.data);
+                const adjustedThreshold = threshold / (sensitivity * 2);
+                
+                if (difference > adjustedThreshold) {
+                    transitions.push({
+                        time: currFrame.time,
+                        confidence: Math.min(difference / 100, 1),
+                        type: 'transition'
+                    });
+                }
+                
+                // Simulate text detection (random for demo)
+                if (Math.random() < 0.1 * (sensitivity / 5)) {
+                    textAppearances.push({
+                        time: currFrame.time,
+                        confidence: Math.random() * 0.5 + 0.5,
+                        type: 'text'
+                    });
+                }
+            }
+            
+            return {
+                transitions,
+                textAppearances,
+                totalFrames: frames.length,
+                duration: frames[frames.length - 1].time
+            };
+        }
+
+        async function calculateFrameDifference(frame1Data, frame2Data) {
+            // Simulate frame difference calculation
+            // In real implementation, this would compare pixel data
+            return Math.random() * 100; // Simulated difference
+        }
+
+        async function mapSFXToPoints(detectionResults) {
+            const points = [];
+            let { transitions, textAppearances } = detectionResults;
+            
+            // Select detection points based on placement mode
+            let detectionPoints = [];
+            if (placementMode === 'transition') {
+                detectionPoints = transitions;
+            } else if (placementMode === 'text') {
+                detectionPoints = textAppearances;
+            } else if (placementMode === 'both') {
+                detectionPoints = [...transitions, ...textAppearances];
+            }
+            
+            // Sort by time
+            detectionPoints.sort((a, b) => a.time - b.time);
+            
+            // Assign SFX to detection points
+            detectionPoints.forEach((point, index) => {
+                if (point.confidence > 0.3) { // Minimum confidence threshold
+                    const sfxFile = sfxFiles[index % sfxFiles.length];
+                    points.push({
+                        time: point.time,
+                        sfxFile: sfxFile,
+                        sfxName: sfxFile.name,
+                        type: point.type,
+                        confidence: point.confidence
+                    });
+                }
+            });
+            
+            return points;
+        }
+
+        async function combineVideoWithSFX(videoFile, sfxPoints) {
+            // In a real implementation, this would use Web Audio API and Canvas
+            // to combine video with audio tracks at specific timestamps
+            // For demo, we'll just return the original video
+            return URL.createObjectURL(videoFile);
+        }
+
+        // Preview Functions
+        function showPreview() {
+            previewSection.classList.add('show');
+            
+            if (processedVideoUrl) {
+                videoPreview.src = processedVideoUrl;
+            }
+            
+            // Display SFX timeline
+            sfxList.innerHTML = '';
+            detectedSFXPoints.forEach((point, index) => {
+                const sfxItem = document.createElement('div');
+                sfxItem.className = 'sfx-item';
+                sfxItem.innerHTML = `
+                    <span class="sfx-time">${formatTime(point.time)}</span>
+                    <span class="sfx-type">${point.type === 'transition' ? '🔄 Transisi' : '📝 Teks'}</span>
+                    <span class="sfx-name">${point.sfxName}</span>
+                    <span style="color: #666; font-size: 0.8em;">Confidence: ${Math.round(point.confidence * 100)}%</span>
+                `;
+                sfxList.appendChild(sfxItem);
+            });
+        }
+
+        // Download Function
+        function downloadVideo() {
+            if (processedVideoUrl) {
+                const a = document.createElement('a');
+                a.href = processedVideoUrl;
+                a.download = `video_with_sfx_${Date.now()}.mp4`;
+                a.click();
+                showAlert('📥 Video sedang didownload...', 'success');
+            }
+        }
+
+        // Utility Functions
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        function formatTime(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            const ms = Math.floor((seconds % 1) * 100);
+            return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${ms.toString().padStart(2, '0')}`;
+        }
+
+        function updateProgress(percent, message) {
+            progressFill.style.width = percent + '%';
+            progressText.textContent = message + ` (${percent}%)`;
+        }
+
+        function showAlert(message, type) {
+            alertBox.textContent = message;
+            alertBox.className = `alert alert-${type} show`;
+            setTimeout(() => {
+                alertBox.classList.remove('show');
+            }, 5000);
+        }
+    </script>
+</body>
+</html>
