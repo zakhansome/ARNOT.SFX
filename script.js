@@ -1,16 +1,10 @@
 // ================= STATE =================
 let videoFile = null;
 let sfxFiles = [];
-let placementMode = 'transition';
+let detectedPoints = [];
 let processedBlob = null;
-let detectedTransitions = [];
-let detectedTexts = [];
-let combinedPoints = [];
 let isProcessing = false;
-let ffmpeg = null;
-let ffmpegLoaded = false;
 
-// ================= DOM =================
 const $ = (id) => document.getElementById(id);
 const videoInput = $('videoInput');
 const sfxInput = $('sfxInput');
@@ -27,468 +21,380 @@ const videoPreview = $('videoPreview');
 const sfxList = $('sfxList');
 const alertBox = $('alertBox');
 const loadingOverlay = $('loadingOverlay');
-const loadingDetail = $('loadingDetail');
+const loadingText = $('loadingText');
 const downloadVideoBtn = $('downloadVideoBtn');
-const downloadSFXBtn = $('downloadSFXBtn');
 const statTransitions = $('statTransitions');
-const statTexts = $('statTexts');
 const statSFX = $('statSFX');
 const statDuration = $('statDuration');
 
 // ================= INIT =================
 document.addEventListener('DOMContentLoaded', () => {
-  setupEventListeners();
-  updateSensitivityValue();
-  updateVolumeValue();
-  // Preload FFmpeg di background
-  initFFmpeg().catch(err => console.warn('FFmpeg tidak bisa dimuat:', err));
-});
-
-function setupEventListeners() {
   videoBox.addEventListener('click', () => videoInput.click());
   sfxBox.addEventListener('click', () => sfxInput.click());
+  videoInput.addEventListener('change', e => { if (e.target.files[0]) { videoFile = e.target.files[0]; onVideoUpload(); } });
+  sfxInput.addEventListener('change', e => { if (e.target.files.length) { sfxFiles = Array.from(e.target.files); onSFXUpload(); } });
 
-  videoInput.addEventListener('change', handleVideoUpload);
-  sfxInput.addEventListener('change', handleSFXUpload);
-
-  // Drag & drop
-  [videoBox, sfxBox].forEach(box => {
-    box.addEventListener('dragover', e => { e.preventDefault(); box.classList.add('active'); });
-    box.addEventListener('dragleave', () => box.classList.remove('active'));
-    box.addEventListener('drop', e => {
-      e.preventDefault();
-      box.classList.remove('active');
-      const files = e.dataTransfer.files;
-      if (box === videoBox && files[0]?.type.startsWith('video/')) {
-        videoFile = files[0];
-        updateVideoInfo();
-      } else if (box === sfxBox) {
-        const audios = Array.from(files).filter(f => f.type.startsWith('audio/'));
-        if (audios.length) {
-          sfxFiles = [...sfxFiles, ...audios];
-          updateSFXInfo();
-        }
-      }
-      updateProcessButton();
-    });
-  });
-
-  // Opsi mode
-  document.querySelectorAll('.option-card').forEach(card => {
-    card.addEventListener('click', () => selectPlacementMode(card.dataset.mode));
-  });
-
-  // Slider
-  $('transitionSensitivity').addEventListener('input', updateSensitivityValue);
-  $('sfxVolume').addEventListener('input', updateVolumeValue);
-  $('previewVolume').addEventListener('input', updatePreviewVolume);
-
-  // Tombol
-  processBtn.addEventListener('click', processVideo);
+  $('transitionSensitivity').addEventListener('input', () => $('sensitivityValue').textContent = $('transitionSensitivity').value);
+  $('sfxVolume').addEventListener('input', () => $('volumeValue').textContent = $('sfxVolume').value + '%');
+  processBtn.addEventListener('click', process);
   downloadVideoBtn.addEventListener('click', downloadVideo);
-  downloadSFXBtn.addEventListener('click', downloadSFXList);
-}
+});
 
-// ================= UPLOAD HANDLERS =================
-function handleVideoUpload(e) {
-  if (e.target.files[0]) {
-    videoFile = e.target.files[0];
-    updateVideoInfo();
-  }
-}
-
-function handleSFXUpload(e) {
-  if (e.target.files.length) {
-    sfxFiles = Array.from(e.target.files);
-    updateSFXInfo();
-  }
-}
-
-function updateVideoInfo() {
+// ================= UPLOAD =================
+function onVideoUpload() {
   videoInfo.textContent = `📁 ${videoFile.name} (${formatSize(videoFile.size)})`;
   videoInfo.classList.add('show');
   videoBox.classList.add('has-file');
-  updateProcessButton();
+  updateProcessBtn();
   showAlert('✅ Video diupload', 'success');
 }
-
-function updateSFXInfo() {
+function onSFXUpload() {
   sfxInfo.textContent = `📁 ${sfxFiles.length} SFX: ${sfxFiles.map(f => f.name).join(', ')}`;
   sfxInfo.classList.add('show');
   sfxBox.classList.add('has-file');
-  updateProcessButton();
+  updateProcessBtn();
   showAlert(`✅ ${sfxFiles.length} SFX diupload`, 'success');
 }
-
-function updateProcessButton() {
+function updateProcessBtn() {
   processBtn.disabled = !(videoFile && sfxFiles.length > 0);
 }
 
-// ================= UI HELPERS =================
-function selectPlacementMode(mode) {
-  placementMode = mode;
-  document.querySelectorAll('.option-card').forEach(c => c.classList.remove('selected'));
-  document.querySelector(`[data-mode="${mode}"]`).classList.add('selected');
-}
-
-function updateSensitivityValue() {
-  $('sensitivityValue').textContent = $('transitionSensitivity').value;
-}
-
-function updateVolumeValue() {
-  $('volumeValue').textContent = $('sfxVolume').value + '%';
-}
-
-function updatePreviewVolume() {
-  videoPreview.volume = $('previewVolume').value / 100;
-  $('previewVolumeValue').textContent = $('previewVolume').value + '%';
-}
-
+// ================= HELPERS =================
 function showAlert(msg, type) {
   alertBox.textContent = msg;
   alertBox.className = `alert alert-${type} show`;
   setTimeout(() => alertBox.classList.remove('show'), 5000);
 }
-
-function showLoading(msg) {
-  loadingDetail.textContent = msg || 'Memproses...';
-  loadingOverlay.classList.add('show');
+function showLoading(msg) { loadingText.textContent = msg || 'Memproses...'; loadingOverlay.classList.add('show'); }
+function hideLoading() { loadingOverlay.classList.remove('show'); }
+function updateProgress(p, msg) {
+  progressFill.style.width = p + '%';
+  progressText.textContent = `${msg} (${Math.round(p)}%)`;
 }
-
-function hideLoading() {
-  loadingOverlay.classList.remove('show');
+function formatSize(b) {
+  if (b === 0) return '0 B';
+  const k = 1024, s = ['B','KB','MB','GB'], i = Math.floor(Math.log(b) / Math.log(k));
+  return parseFloat((b / Math.pow(k, i)).toFixed(2)) + ' ' + s[i];
 }
-
-function updateProgress(percent, msg) {
-  progressFill.style.width = percent + '%';
-  progressText.textContent = `${msg} (${Math.round(percent)}%)`;
-}
-
-// ================= UTIL =================
-function formatSize(bytes) {
-  if (bytes === 0) return '0 B';
-  const k = 1024;
-  const sizes = ['B','KB','MB','GB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
-
 function formatTime(sec) {
-  const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  const ms = Math.floor((sec % 1) * 100);
-  return `${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}.${ms.toString().padStart(2,'0')}`;
+  const m = Math.floor(sec/60), s = Math.floor(sec%60), ms = Math.floor((sec%1)*100);
+  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(2,'0')}`;
 }
 
-// ================= FFMPEG INIT =================
-async function initFFmpeg() {
-  if (ffmpegLoaded && ffmpeg) return ffmpeg;
-
-  showLoading('Menginisialisasi FFmpeg...');
-  try {
-    if (typeof FFmpeg === 'undefined') {
-      throw new Error('Library FFmpeg tidak ditemukan. Periksa koneksi internet.');
-    }
-
-    const { createFFmpeg, fetchFile } = FFmpeg;
-    ffmpeg = createFFmpeg({
-      log: true,
-      corePath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/ffmpeg-core.js',
-      wasmPath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/ffmpeg-core.wasm',
-      workerPath: 'https://cdn.jsdelivr.net/npm/@ffmpeg/core@0.12.6/dist/ffmpeg-core.worker.js',
-      progress: ({ ratio }) => {
-        if (ratio) {
-          const percent = Math.round(ratio * 100);
-          updateProgress(70 + (percent * 0.2), `Processing FFmpeg... ${percent}%`);
-        }
-      }
-    });
-
-    showLoading('Mengunduh FFmpeg core...');
-    await ffmpeg.load();
-    ffmpegLoaded = true;
-    hideLoading();
-    console.log('✅ FFmpeg siap');
-    return ffmpeg;
-  } catch (err) {
-    hideLoading();
-    console.error('❌ Gagal init FFmpeg:', err);
-    throw err;
+// ================= DETEKSI SHOT BOUNDARY (HISTOGRAM) =================
+function computeHistogram(imgData) {
+  const hist = new Float32Array(64);
+  const d = imgData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const gray = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
+    hist[Math.min(63, Math.floor(gray / 4))]++;
   }
+  const total = d.length / 4;
+  for (let i = 0; i < 64; i++) hist[i] /= total;
+  return hist;
 }
 
-// ================= EKSTRAKSI FRAME & DETEKSI TRANSISI =================
-async function extractFrames(videoElement, fps = 5) {
-  return new Promise(async (resolve, reject) => {
-    const frames = [];
-    const duration = videoElement.duration;
-    const interval = 1 / fps;
-    const canvas = document.createElement('canvas');
-    canvas.width = 160;
-    canvas.height = 90;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+function histogramDistance(h1, h2) {
+  let d = 0;
+  for (let i = 0; i < 64; i++) {
+    const diff = h1[i] - h2[i];
+    const denom = h1[i] + h2[i];
+    if (denom > 0) d += (diff * diff) / denom;
+  }
+  return d;
+}
 
-    const seekTo = (time) => new Promise((res, rej) => {
-      const onSeeked = () => {
-        videoElement.removeEventListener('seeked', onSeeked);
-        res();
-      };
-      videoElement.addEventListener('seeked', onSeeked);
-      videoElement.currentTime = time;
-      // Timeout pengaman 500ms
-      setTimeout(() => {
-        videoElement.removeEventListener('seeked', onSeeked);
-        res();
-      }, 500);
-    });
+async function extractHistograms(video, sampleFps) {
+  const duration = video.duration;
+  const interval = 1 / sampleFps;
+  const histograms = [];
+  const canvas = document.createElement('canvas');
+  canvas.width = 160; canvas.height = 90;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-    try {
-      for (let t = 0; t <= duration; t += interval) {
-        await seekTo(t);
-        ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        frames.push({ time: t, data: imageData.data });
-        updateProgress(15 + (t / duration) * 15, 'Ekstraksi frame...');
-      }
-      resolve(frames);
-    } catch (err) {
-      reject(err);
-    }
+  const seekTo = (time) => new Promise((resolve) => {
+    let done = false;
+    const onSeeked = () => {
+      if (done) return;
+      done = true;
+      video.removeEventListener('seeked', onSeeked);
+      resolve();
+    };
+    video.addEventListener('seeked', onSeeked);
+    video.currentTime = time;
+    setTimeout(() => { if (!done) { done = true; video.removeEventListener('seeked', onSeeked); resolve(); } }, 500);
   });
-}
 
-function computeFrameDifference(frame1, frame2) {
-  const d1 = frame1.data;
-  const d2 = frame2.data;
-  let diff = 0;
-  const step = 4;
-  const len = d1.length;
-  for (let i = 0; i < len; i += step) {
-    const g1 = 0.299 * d1[i] + 0.587 * d1[i+1] + 0.114 * d1[i+2];
-    const g2 = 0.299 * d2[i] + 0.587 * d2[i+1] + 0.114 * d2[i+2];
-    diff += Math.abs(g1 - g2);
+  for (let t = 0; t < duration; t += interval) {
+    await seekTo(t);
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    histograms.push({ time: t, hist: computeHistogram(imgData) });
+    updateProgress(5 + (t / duration) * 20, 'Analisis histogram...');
   }
-  const pixelCount = len / step;
-  return (diff / pixelCount) * (100 / 255);
+  return histograms;
 }
 
-async function detectTransitions(videoElement) {
-  const sensitivity = parseInt($('transitionSensitivity').value);
-  const minThreshold = parseInt($('transitionThreshold').value);
-  const fps = 5;
-
-  showLoading('Mengekstrak frame...');
-  const frames = await extractFrames(videoElement, fps);
-  console.log(`📊 Frame diekstrak: ${frames.length}`);
-
-  if (frames.length < 2) throw new Error('Gagal mengekstrak frame');
-
-  const diffs = [];
-  for (let i = 1; i < frames.length; i++) {
-    diffs.push({
+function detectShotBoundaries(histograms, sensitivity) {
+  const distances = [];
+  for (let i = 1; i < histograms.length; i++) {
+    distances.push({
       index: i,
-      time: frames[i].time,
-      diff: computeFrameDifference(frames[i-1], frames[i])
+      time: histograms[i].time,
+      distance: histogramDistance(histograms[i-1].hist, histograms[i].hist)
     });
   }
 
-  const mean = diffs.reduce((s, d) => s + d.diff, 0) / diffs.length;
-  const variance = diffs.reduce((s, d) => s + (d.diff - mean) ** 2, 0) / diffs.length;
+  const values = distances.map(d => d.distance);
+  const mean = values.reduce((a,b) => a+b, 0) / values.length;
+  const variance = values.reduce((a,b) => a + (b-mean)**2, 0) / values.length;
   const stdDev = Math.sqrt(variance);
-  const adaptiveThreshold = Math.max(minThreshold, mean + sensitivity * 0.5 * stdDev);
 
-  console.log(`📈 Mean diff: ${mean.toFixed(2)}, StdDev: ${stdDev.toFixed(2)}, Threshold: ${adaptiveThreshold.toFixed(2)}`);
+  // k: sensitivitas 1 → k=5 (konservatif), sensitivitas 10 → k=0.8 (agresif)
+  const k = 5 - (sensitivity - 1) * (4.2 / 9);
+  const threshold = mean + k * stdDev;
+  const minDistance = mean + 0.5 * stdDev;
 
-  let transitions = diffs.filter(d => d.diff > adaptiveThreshold);
+  console.log(`📊 Deteksi: mean=${mean.toFixed(4)}, stdDev=${stdDev.toFixed(4)}, k=${k.toFixed(2)}, threshold=${threshold.toFixed(4)}`);
 
-  // Gabungkan yang berdekatan (<0.5 detik)
-  const merged = [];
-  for (const t of transitions) {
-    if (merged.length === 0 || (t.time - merged[merged.length-1].time) > 0.5) {
-      merged.push(t);
-    } else if (t.diff > merged[merged.length-1].diff) {
-      merged[merged.length-1] = t;
+  const candidates = distances.filter(d => d.distance > threshold && d.distance >= minDistance);
+
+  // Non-maximum suppression: window 0.4s
+  const peaks = [];
+  let i = 0;
+  while (i < candidates.length) {
+    let best = candidates[i];
+    let j = i;
+    while (j + 1 < candidates.length && (candidates[j+1].time - candidates[j].time) < 0.4) {
+      j++;
+      if (candidates[j].distance > best.distance) best = candidates[j];
     }
+    peaks.push(best);
+    i = j + 1;
   }
 
-  console.log(`🎯 Transisi terdeteksi: ${merged.length}`);
-  return merged.map(t => ({ time: t.time, confidence: Math.min(t.diff / 50, 1), type: 'transition' }));
-}
-
-// ================= DETEKSI TEKS =================
-async function detectTexts(videoElement) {
-  // Placeholder: implementasi OCR tidak diaktifkan karena berat
-  return [];
+  console.log(`🎯 Shot boundaries: ${peaks.length}`);
+  return peaks.map(p => ({
+    time: p.time,
+    confidence: Math.min(p.distance / (threshold * 2), 1),
+    type: 'transition'
+  }));
 }
 
 // ================= PROSES UTAMA =================
-async function processVideo() {
+async function process() {
   if (isProcessing) return;
   isProcessing = true;
   processBtn.disabled = true;
-
-  detectedTransitions = [];
-  detectedTexts = [];
-  combinedPoints = [];
+  detectedPoints = [];
   processedBlob = null;
 
   try {
     progressSection.classList.add('show');
     previewSection.classList.remove('show');
 
-    // Buat elemen video sementara
-    const tempVideo = document.createElement('video');
-    tempVideo.src = URL.createObjectURL(videoFile);
-    tempVideo.muted = true;
-    tempVideo.playsInline = true;
+    // Load video offscreen
+    const video = document.createElement('video');
+    video.src = URL.createObjectURL(videoFile);
+    video.muted = true;
+    video.playsInline = true;
+    video.preload = 'auto';
+
     await new Promise((res, rej) => {
-      tempVideo.onloadedmetadata = res;
-      tempVideo.onerror = () => rej(new Error('Gagal memuat metadata video'));
+      video.onloadedmetadata = res;
+      video.onerror = () => rej(new Error('Gagal memuat video'));
     });
 
-    // Deteksi transisi
-    updateProgress(20, 'Mendeteksi transisi...');
-    if (placementMode === 'transition' || placementMode === 'both') {
-      detectedTransitions = await detectTransitions(tempVideo);
-    }
+    const duration = video.duration;
+    const sensitivity = parseInt($('transitionSensitivity').value);
 
-    // Deteksi teks (jika diperlukan)
-    if (placementMode === 'text' || placementMode === 'both') {
-      updateProgress(40, 'Mendeteksi teks...');
-      detectedTexts = await detectTexts(tempVideo);
-    }
+    // Deteksi
+    updateProgress(5, 'Mengambil sample frame...');
+    const histograms = await extractHistograms(video, 10);
 
-    // Gabungkan titik deteksi
-    combinedPoints = [...detectedTransitions, ...detectedTexts].sort((a,b) => a.time - b.time);
+    updateProgress(30, 'Mendeteksi shot boundary...');
+    detectedPoints = detectShotBoundaries(histograms, sensitivity);
 
-    // Update statistik
+    // Statistik
     $('statistics').style.display = 'grid';
-    statTransitions.textContent = detectedTransitions.length;
-    statTexts.textContent = detectedTexts.length;
-    statSFX.textContent = combinedPoints.length;
-    statDuration.textContent = Math.round(tempVideo.duration) + 's';
+    statTransitions.textContent = detectedPoints.length;
+    statSFX.textContent = detectedPoints.length;
+    statDuration.textContent = Math.round(duration) + 's';
 
-    if (combinedPoints.length === 0) {
-      showAlert('⚠️ Tidak ada transisi/teks terdeteksi. Coba turunkan threshold atau naikkan sensitivitas.', 'error');
+    if (detectedPoints.length === 0) {
+      showAlert('⚠️ Tidak ada transisi terdeteksi. Naikkan sensitivitas dan coba lagi.', 'error');
       return;
     }
 
-    // Proses dengan FFmpeg
-    updateProgress(60, 'Menggabungkan audio dengan FFmpeg...');
-    await initFFmpeg(); // pastikan sudah siap
-    processedBlob = await addSFXWithFFmpeg(tempVideo.duration, combinedPoints);
+    // Render video + audio
+    updateProgress(45, 'Menyiapkan rendering...');
+    processedBlob = await renderVideoWithSFX(video, detectedPoints);
 
-    // Tampilkan preview
-    updateProgress(90, 'Menyiapkan preview...');
-    const processedUrl = URL.createObjectURL(processedBlob);
-    videoPreview.src = processedUrl;
+    updateProgress(100, 'Selesai!');
+    videoPreview.src = URL.createObjectURL(processedBlob);
     previewSection.classList.add('show');
     renderSFXList();
 
-    showAlert('✅ Berhasil! Video dengan SFX siap diunduh.', 'success');
+    showAlert(`✅ Selesai! ${detectedPoints.length} SFX ditempatkan otomatis.`, 'success');
 
   } catch (err) {
-    console.error(err);
+    console.error('❌ Error:', err);
     showAlert('❌ Gagal: ' + err.message, 'error');
   } finally {
     isProcessing = false;
     processBtn.disabled = false;
     progressSection.classList.remove('show');
     hideLoading();
-    if (tempVideo) URL.revokeObjectURL(tempVideo.src);
   }
 }
 
-// ================= PROSES FFMPEG =================
-async function addSFXWithFFmpeg(videoDuration, sfxPoints) {
-  const { fetchFile } = FFmpeg;
-  const volume = parseInt($('sfxVolume').value) / 100;
+// ================= RENDER: GABUNG VIDEO + SFX =================
+async function renderVideoWithSFX(sourceVideo, points) {
+  const sfxVolume = parseInt($('sfxVolume').value) / 100;
 
-  // Bersihkan filesystem
-  await cleanFFmpegFS();
+  // Video element untuk rendering (dengan audio aktif)
+  const video = document.createElement('video');
+  video.src = sourceVideo.src;
+  video.playsInline = true;
+  video.preload = 'auto';
+  video.crossOrigin = 'anonymous';
 
-  // Tulis video input
-  const videoExt = videoFile.name.split('.').pop().toLowerCase() || 'mp4';
-  const inputVideoName = `input.${videoExt}`;
-  ffmpeg.FS('writeFile', inputVideoName, await fetchFile(videoFile));
+  await new Promise((res, rej) => {
+    video.onloadedmetadata = res;
+    video.onerror = () => rej(new Error('Gagal load video'));
+  });
 
-  // Siapkan command
-  let cmd = ['-i', inputVideoName];
-  const filterParts = [];
+  // Canvas untuk video track
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth || 1280;
+  canvas.height = video.videoHeight || 720;
+  const ctx = canvas.getContext('2d');
 
-  // Tulis SFX files dan tambahkan input
-  for (let i = 0; i < sfxPoints.length; i++) {
-    const sfxExt = sfxFiles[i % sfxFiles.length].name.split('.').pop().toLowerCase();
-    const sfxName = `sfx_${i}.${sfxExt}`;
-    ffmpeg.FS('writeFile', sfxName, await fetchFile(sfxFiles[i % sfxFiles.length]));
-    cmd.push('-i', sfxName);
+  // AudioContext untuk mixing
+  const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  await audioCtx.resume();
 
-    const delayMs = Math.round(sfxPoints[i].time * 1000);
-    filterParts.push(`[${i+1}:a]volume=${volume},adelay=${delayMs}|${delayMs}[a${i}]`);
+  // Route audio video asli lewat AudioContext
+  const videoSourceNode = audioCtx.createMediaElementSource(video);
+
+  // Destination untuk recording audio
+  const dest = audioCtx.createMediaStreamDestination();
+
+  // Gain untuk audio asli (biar seimbang)
+  const originalGain = audioCtx.createGain();
+  originalGain.gain.value = 1.0;
+
+  videoSourceNode.connect(originalGain);
+  originalGain.connect(dest);
+
+  // Video stream dari canvas (video-only)
+  const canvasStream = canvas.captureStream(30);
+
+  // Audio stream dari dest
+  const mixedAudioTrack = dest.stream.getAudioTracks()[0];
+
+  // Gabung
+  const combined = new MediaStream();
+  combined.addTrack(canvasStream.getVideoTracks()[0]);
+  combined.addTrack(mixedAudioTrack);
+
+  // Preload SFX buffers
+  showLoading('Memuat SFX...');
+  const sfxBuffers = [];
+  for (const f of sfxFiles) {
+    const ab = await f.arrayBuffer();
+    const buf = await audioCtx.decodeAudioData(ab.slice(0));
+    sfxBuffers.push(buf);
   }
 
-  // Buat filter untuk audio asli (jika ada)
-  filterParts.push(`[0:a]anull[original]`);
+  // MediaRecorder
+  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+    ? 'video/webm;codecs=vp9,opus'
+    : (MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
+        ? 'video/webm;codecs=vp8,opus'
+        : 'video/webm');
 
-  // Mix semua audio SFX
-  const sfxInputs = sfxPoints.map((_, i) => `[a${i}]`).join('');
-  filterParts.push(`${sfxInputs}amix=inputs=${sfxPoints.length}:duration=longest:normalize=0[sfx_mixed]`);
+  const recorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: 3000000 });
+  const chunks = [];
+  recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+  const recordingDone = new Promise(resolve => {
+    recorder.onstop = () => resolve(new Blob(chunks, { type: 'video/webm' }));
+  });
 
-  // Mix dengan audio asli
-  filterParts.push(`[original][sfx_mixed]amix=inputs=2:duration=first:normalize=0[outa]`);
+  // Reset video ke awal
+  video.currentTime = 0;
+  await new Promise(r => {
+    const onSeeked = () => { video.removeEventListener('seeked', onSeeked); r(); };
+    video.addEventListener('seeked', onSeeked);
+    setTimeout(r, 300);
+  });
 
-  cmd.push('-filter_complex', filterParts.join(';'));
-  cmd.push('-map', '0:v:0');
-  cmd.push('-map', '[outa]');
-  cmd.push('-c:v', 'libx264');
-  cmd.push('-preset', 'fast');
-  cmd.push('-crf', '23');
-  cmd.push('-c:a', 'aac');
-  cmd.push('-b:a', '192k');
-  cmd.push('-shortest');
-  cmd.push('output.mp4');
+  hideLoading();
 
-  console.log('🎬 FFmpeg command:', cmd.join(' '));
-  showLoading('Menjalankan FFmpeg...');
+  // Draw loop
+  let drawActive = true;
+  const draw = () => {
+    if (!drawActive || video.paused || video.ended) return;
+    try { ctx.drawImage(video, 0, 0, canvas.width, canvas.height); } catch(e) {}
+    requestAnimationFrame(draw);
+  };
 
-  try {
-    await ffmpeg.run(...cmd);
-    const data = ffmpeg.FS('readFile', 'output.mp4');
-    const blob = new Blob([data.buffer], { type: 'video/mp4' });
-    await cleanFFmpegFS();
-    return blob;
-  } catch (err) {
-    console.error('FFmpeg error:', err);
-    await cleanFFmpegFS();
-    throw new Error('FFmpeg gagal memproses: ' + err.message);
-  }
+  // Mulai
+  recorder.start(100);
+  await video.play();
+  const startTime = audioCtx.currentTime;
+  draw();
+
+  // Jadwalkan SFX
+  points.forEach((p, i) => {
+    const buf = sfxBuffers[i % sfxBuffers.length];
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    const gain = audioCtx.createGain();
+    gain.gain.value = sfxVolume;
+    src.connect(gain);
+    gain.connect(dest);
+    const when = startTime + Math.max(0, p.time);
+    try { src.start(when); } catch(e) { console.warn('SFX start err', e); }
+  });
+
+  // Update progress selama render
+  const duration = video.duration;
+  const t0 = performance.now();
+  const interval = setInterval(() => {
+    const elapsed = (performance.now() - t0) / 1000;
+    const pct = 45 + Math.min(50, (elapsed / duration) * 50);
+    updateProgress(pct, 'Merekam video + SFX...');
+    if (elapsed >= duration) clearInterval(interval);
+  }, 200);
+
+  // Tunggu selesai
+  await new Promise(resolve => {
+    video.onended = resolve;
+    setTimeout(resolve, (duration + 2) * 1000);
+  });
+
+  clearInterval(interval);
+  drawActive = false;
+  recorder.stop();
+  video.pause();
+
+  const blob = await recordingDone;
+  try { audioCtx.close(); } catch(e) {}
+  return blob;
 }
 
-async function cleanFFmpegFS() {
-  if (!ffmpeg) return;
-  try {
-    const files = ffmpeg.FS('readdir', '/');
-    for (const file of files) {
-      if (file !== '.' && file !== '..') {
-        try { ffmpeg.FS('unlink', '/' + file); } catch (e) {}
-      }
-    }
-  } catch (err) {
-    console.warn('Pembersihan FS gagal:', err);
-  }
-}
-
-// ================= RENDER SFX LIST =================
+// ================= RENDER LIST =================
 function renderSFXList() {
   sfxList.innerHTML = '';
-  combinedPoints.forEach((point, i) => {
+  detectedPoints.forEach((point, i) => {
     const div = document.createElement('div');
     div.className = 'sfx-item';
     div.innerHTML = `
       <span class="sfx-time">${formatTime(point.time)}</span>
-      <span class="sfx-type">${point.type === 'transition' ? '🔄 Transisi' : '📝 Teks'}</span>
+      <span class="sfx-type">🔄 Transisi</span>
       <span class="sfx-name">${sfxFiles[i % sfxFiles.length].name}</span>
-      <span class="sfx-confidence">Confidence: ${Math.round(point.confidence * 100)}%</span>
+      <span class="sfx-confidence">${Math.round(point.confidence * 100)}%</span>
     `;
     sfxList.appendChild(div);
   });
@@ -496,22 +402,10 @@ function renderSFXList() {
 
 // ================= DOWNLOAD =================
 function downloadVideo() {
-  if (processedBlob) {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(processedBlob);
-    a.download = `video_sfx_${Date.now()}.mp4`;
-    a.click();
-  }
-}
-
-function downloadSFXList() {
-  if (!combinedPoints.length) return;
-  const text = combinedPoints.map((p, i) =>
-    `${i+1}. ${formatTime(p.time)} - ${p.type} - ${sfxFiles[i % sfxFiles.length].name}`
-  ).join('\n');
-  const blob = new Blob([text], { type: 'text/plain' });
+  if (!processedBlob) return;
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'sfx_timeline.txt';
+  a.href = URL.createObjectURL(processedBlob);
+  a.download = `video_with_sfx_${Date.now()}.webm`;
   a.click();
+  showAlert('📥 Download dimulai...', 'success');
 }
