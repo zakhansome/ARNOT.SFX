@@ -31,11 +31,18 @@ const statDuration = $('statDuration');
 document.addEventListener('DOMContentLoaded', () => {
   videoBox.addEventListener('click', () => videoInput.click());
   sfxBox.addEventListener('click', () => sfxInput.click());
-  videoInput.addEventListener('change', e => { if (e.target.files[0]) { videoFile = e.target.files[0]; onVideoUpload(); } });
-  sfxInput.addEventListener('change', e => { if (e.target.files.length) { sfxFiles = Array.from(e.target.files); onSFXUpload(); } });
-
-  $('transitionSensitivity').addEventListener('input', () => $('sensitivityValue').textContent = $('transitionSensitivity').value);
-  $('sfxVolume').addEventListener('input', () => $('volumeValue').textContent = $('sfxVolume').value + '%');
+  videoInput.addEventListener('change', e => {
+    if (e.target.files[0]) { videoFile = e.target.files[0]; onVideoUpload(); }
+  });
+  sfxInput.addEventListener('change', e => {
+    if (e.target.files.length) { sfxFiles = Array.from(e.target.files); onSFXUpload(); }
+  });
+  $('transitionSensitivity').addEventListener('input', () => {
+    $('sensitivityValue').textContent = $('transitionSensitivity').value;
+  });
+  $('sfxVolume').addEventListener('input', () => {
+    $('volumeValue').textContent = $('sfxVolume').value + '%';
+  });
   processBtn.addEventListener('click', process);
   downloadVideoBtn.addEventListener('click', downloadVideo);
 });
@@ -77,16 +84,46 @@ function formatSize(b) {
   return parseFloat((b / Math.pow(k, i)).toFixed(2)) + ' ' + s[i];
 }
 function formatTime(sec) {
-  const m = Math.floor(sec/60), s = Math.floor(sec%60), ms = Math.floor((sec%1)*100);
+  const m = Math.floor(sec / 60), s = Math.floor(sec % 60), ms = Math.floor((sec % 1) * 100);
   return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(2,'0')}`;
 }
 
-// ================= DETEKSI SHOT BOUNDARY (HISTOGRAM) =================
+// ================= SEEK (DIPERBAIKI) =================
+// Menggunakan event 'seeked' saja. requestVideoFrameCallback TIDAK BOLEH
+// dipakai untuk seek karena hanya terpicu saat video diputar, bukan saat seek.
+function seekTo(video, time) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      video.removeEventListener('seeked', onSeeked);
+      video.removeEventListener('error', finish);
+      resolve();
+    };
+    const onSeeked = () => finish();
+
+    video.addEventListener('seeked', onSeeked, { once: true });
+    video.addEventListener('error', finish, { once: true });
+
+    try {
+      video.currentTime = time;
+    } catch (e) {
+      finish();
+      return;
+    }
+
+    // Fallback kalau seeked tidak terpicu (video corrupt / format aneh)
+    setTimeout(finish, 1000);
+  });
+}
+
+// ================= HISTOGRAM =================
 function computeHistogram(imgData) {
   const hist = new Float32Array(64);
   const d = imgData.data;
   for (let i = 0; i < d.length; i += 4) {
-    const gray = 0.299 * d[i] + 0.587 * d[i+1] + 0.114 * d[i+2];
+    const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
     hist[Math.min(63, Math.floor(gray / 4))]++;
   }
   const total = d.length / 4;
@@ -104,55 +141,55 @@ function histogramDistance(h1, h2) {
   return d;
 }
 
+// ================= EKSTRAK HISTOGRAM =================
 async function extractHistograms(video, sampleFps) {
   const duration = video.duration;
   const interval = 1 / sampleFps;
   const histograms = [];
+
   const canvas = document.createElement('canvas');
-  canvas.width = 160; canvas.height = 90;
+  canvas.width = 160;
+  canvas.height = 90;
   const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-  const seekTo = (time) => new Promise((resolve) => {
-    let done = false;
-    const onSeeked = () => {
-      if (done) return;
-      done = true;
-      video.removeEventListener('seeked', onSeeked);
-      resolve();
-    };
-    video.addEventListener('seeked', onSeeked);
-    video.currentTime = time;
-    setTimeout(() => { if (!done) { done = true; video.removeEventListener('seeked', onSeeked); resolve(); } }, 500);
-  });
+  const totalSamples = Math.max(1, Math.floor(duration * sampleFps));
+  let count = 0;
 
   for (let t = 0; t < duration; t += interval) {
-    await seekTo(t);
-    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    histograms.push({ time: t, hist: computeHistogram(imgData) });
-    updateProgress(5 + (t / duration) * 20, 'Analisis histogram...');
+    await seekTo(video, t);
+    try {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      histograms.push({ time: t, hist: computeHistogram(imgData) });
+    } catch (e) {
+      console.warn('Gagal baca frame di', t, e);
+    }
+    count++;
+    updateProgress(5 + (count / totalSamples) * 20, 'Analisis histogram...');
   }
+
+  console.log(`📊 Total histograms: ${histograms.length}`);
   return histograms;
 }
 
+// ================= DETEKSI SHOT BOUNDARY =================
 function detectShotBoundaries(histograms, sensitivity) {
+  if (histograms.length < 3) return [];
+
   const distances = [];
   for (let i = 1; i < histograms.length; i++) {
     distances.push({
       index: i,
-      // titik potong sesungguhnya ada di ANTARA frame i-1 dan i,
-      // bukan persis di frame i (yang sudah masuk shot baru)
-      time: (histograms[i-1].time + histograms[i].time) / 2,
-      distance: histogramDistance(histograms[i-1].hist, histograms[i].hist)
+      time: histograms[i].time,
+      distance: histogramDistance(histograms[i - 1].hist, histograms[i].hist)
     });
   }
 
   const values = distances.map(d => d.distance);
-  const mean = values.reduce((a,b) => a+b, 0) / values.length;
-  const variance = values.reduce((a,b) => a + (b-mean)**2, 0) / values.length;
+  const mean = values.reduce((a, b) => a + b, 0) / values.length;
+  const variance = values.reduce((a, b) => a + (b - mean) ** 2, 0) / values.length;
   const stdDev = Math.sqrt(variance);
 
-  // k: sensitivitas 1 → k=5 (konservatif), sensitivitas 10 → k=0.8 (agresif)
   const k = 5 - (sensitivity - 1) * (4.2 / 9);
   const threshold = mean + k * stdDev;
   const minDistance = mean + 0.5 * stdDev;
@@ -161,13 +198,13 @@ function detectShotBoundaries(histograms, sensitivity) {
 
   const candidates = distances.filter(d => d.distance > threshold && d.distance >= minDistance);
 
-  // Non-maximum suppression: window 0.4s
+  // Non-maximum suppression, window 0.4s
   const peaks = [];
   let i = 0;
   while (i < candidates.length) {
     let best = candidates[i];
     let j = i;
-    while (j + 1 < candidates.length && (candidates[j+1].time - candidates[j].time) < 0.4) {
+    while (j + 1 < candidates.length && (candidates[j + 1].time - candidates[j].time) < 0.4) {
       j++;
       if (candidates[j].distance > best.distance) best = candidates[j];
     }
@@ -200,11 +237,20 @@ async function process() {
     video.muted = true;
     video.playsInline = true;
     video.preload = 'auto';
+    video.crossOrigin = 'anonymous';
 
     await new Promise((res, rej) => {
       video.onloadedmetadata = res;
       video.onerror = () => rej(new Error('Gagal memuat video'));
     });
+
+    // Pastikan video siap untuk seek
+    if (video.readyState < 1) {
+      await new Promise((res) => {
+        video.onloadeddata = res;
+        setTimeout(res, 2000);
+      });
+    }
 
     const duration = video.duration;
     const sensitivity = parseInt($('transitionSensitivity').value);
@@ -246,7 +292,7 @@ async function process() {
   }
 }
 
-// ================= RENDER: GABUNG VIDEO + SFX =================
+// ================= RENDER VIDEO + SFX =================
 async function renderVideoWithSFX(sourceVideo, points) {
   const sfxVolume = parseInt($('sfxVolume').value) / 100;
 
@@ -258,33 +304,37 @@ async function renderVideoWithSFX(sourceVideo, points) {
 
   await new Promise((res, rej) => {
     video.onloadedmetadata = res;
-    video.onerror = () => rej(new Error('Gagal load video'));
+    video.onerror = () => rej(new Error('Gagal load video untuk render'));
   });
 
+  // Canvas untuk video track
   const canvas = document.createElement('canvas');
   canvas.width = video.videoWidth || 1280;
   canvas.height = video.videoHeight || 720;
   const ctx = canvas.getContext('2d');
 
+  // Audio context
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   await audioCtx.resume();
 
   const videoSourceNode = audioCtx.createMediaElementSource(video);
   const dest = audioCtx.createMediaStreamDestination();
-
   const originalGain = audioCtx.createGain();
   originalGain.gain.value = 1.0;
 
   videoSourceNode.connect(originalGain);
   originalGain.connect(dest);
+  originalGain.connect(audioCtx.destination); // supaya audio terdengar saat playback
 
+  // Video stream dari canvas
   const canvasStream = canvas.captureStream(30);
-  const mixedAudioTrack = dest.stream.getAudioTracks()[0];
 
+  // Gabung video + audio
   const combined = new MediaStream();
   combined.addTrack(canvasStream.getVideoTracks()[0]);
-  combined.addTrack(mixedAudioTrack);
+  combined.addTrack(dest.stream.getAudioTracks()[0]);
 
+  // Preload SFX
   showLoading('Memuat SFX...');
   const sfxBuffers = [];
   for (const f of sfxFiles) {
@@ -292,12 +342,15 @@ async function renderVideoWithSFX(sourceVideo, points) {
     const buf = await audioCtx.decodeAudioData(ab.slice(0));
     sfxBuffers.push(buf);
   }
+  hideLoading();
 
-  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
-    ? 'video/webm;codecs=vp9,opus'
-    : (MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
-        ? 'video/webm;codecs=vp8,opus'
-        : 'video/webm');
+  // MediaRecorder
+  let mimeType = 'video/webm';
+  if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')) {
+    mimeType = 'video/webm;codecs=vp9,opus';
+  } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')) {
+    mimeType = 'video/webm;codecs=vp8,opus';
+  }
 
   const recorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: 3000000 });
   const chunks = [];
@@ -306,27 +359,32 @@ async function renderVideoWithSFX(sourceVideo, points) {
     recorder.onstop = () => resolve(new Blob(chunks, { type: 'video/webm' }));
   });
 
+  // Reset video ke awal
   video.currentTime = 0;
   await new Promise(r => {
     const onSeeked = () => { video.removeEventListener('seeked', onSeeked); r(); };
     video.addEventListener('seeked', onSeeked);
-    setTimeout(r, 300);
+    setTimeout(r, 500);
   });
 
-  hideLoading();
-
+  // Draw loop
   let drawActive = true;
   const draw = () => {
-    if (!drawActive || video.paused || video.ended) return;
-    try { ctx.drawImage(video, 0, 0, canvas.width, canvas.height); } catch(e) {}
+    if (!drawActive) return;
+    if (!video.paused && !video.ended) {
+      try { ctx.drawImage(video, 0, 0, canvas.width, canvas.height); } catch (e) {}
+    }
     requestAnimationFrame(draw);
   };
 
+  // Start
   recorder.start(100);
   await video.play();
+
   const startTime = audioCtx.currentTime;
   draw();
 
+  // Jadwalkan SFX
   points.forEach((p, i) => {
     const buf = sfxBuffers[i % sfxBuffers.length];
     const src = audioCtx.createBufferSource();
@@ -336,9 +394,10 @@ async function renderVideoWithSFX(sourceVideo, points) {
     src.connect(gain);
     gain.connect(dest);
     const when = startTime + Math.max(0, p.time);
-    try { src.start(when); } catch(e) { console.warn('SFX start err', e); }
+    try { src.start(when); } catch (e) { console.warn('SFX start err', e); }
   });
 
+  // Progress
   const duration = video.duration;
   const t0 = performance.now();
   const interval = setInterval(() => {
@@ -348,6 +407,7 @@ async function renderVideoWithSFX(sourceVideo, points) {
     if (elapsed >= duration) clearInterval(interval);
   }, 200);
 
+  // Tunggu selesai
   await new Promise(resolve => {
     video.onended = resolve;
     setTimeout(resolve, (duration + 2) * 1000);
@@ -359,7 +419,7 @@ async function renderVideoWithSFX(sourceVideo, points) {
   video.pause();
 
   const blob = await recordingDone;
-  try { audioCtx.close(); } catch(e) {}
+  try { audioCtx.close(); } catch (e) {}
   return blob;
 }
 
