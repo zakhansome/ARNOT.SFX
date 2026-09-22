@@ -140,7 +140,9 @@ function detectShotBoundaries(histograms, sensitivity) {
   for (let i = 1; i < histograms.length; i++) {
     distances.push({
       index: i,
-      time: histograms[i].time,
+      // titik potong sesungguhnya ada di ANTARA frame i-1 dan i,
+      // bukan persis di frame i (yang sudah masuk shot baru)
+      time: (histograms[i-1].time + histograms[i].time) / 2,
       distance: histogramDistance(histograms[i-1].hist, histograms[i].hist)
     });
   }
@@ -193,7 +195,6 @@ async function process() {
     progressSection.classList.add('show');
     previewSection.classList.remove('show');
 
-    // Load video offscreen
     const video = document.createElement('video');
     video.src = URL.createObjectURL(videoFile);
     video.muted = true;
@@ -208,14 +209,12 @@ async function process() {
     const duration = video.duration;
     const sensitivity = parseInt($('transitionSensitivity').value);
 
-    // Deteksi
     updateProgress(5, 'Mengambil sample frame...');
     const histograms = await extractHistograms(video, 10);
 
     updateProgress(30, 'Mendeteksi shot boundary...');
     detectedPoints = detectShotBoundaries(histograms, sensitivity);
 
-    // Statistik
     $('statistics').style.display = 'grid';
     statTransitions.textContent = detectedPoints.length;
     statSFX.textContent = detectedPoints.length;
@@ -226,7 +225,6 @@ async function process() {
       return;
     }
 
-    // Render video + audio
     updateProgress(45, 'Menyiapkan rendering...');
     processedBlob = await renderVideoWithSFX(video, detectedPoints);
 
@@ -252,7 +250,6 @@ async function process() {
 async function renderVideoWithSFX(sourceVideo, points) {
   const sfxVolume = parseInt($('sfxVolume').value) / 100;
 
-  // Video element untuk rendering (dengan audio aktif)
   const video = document.createElement('video');
   video.src = sourceVideo.src;
   video.playsInline = true;
@@ -264,41 +261,30 @@ async function renderVideoWithSFX(sourceVideo, points) {
     video.onerror = () => rej(new Error('Gagal load video'));
   });
 
-  // Canvas untuk video track
   const canvas = document.createElement('canvas');
   canvas.width = video.videoWidth || 1280;
   canvas.height = video.videoHeight || 720;
   const ctx = canvas.getContext('2d');
 
-  // AudioContext untuk mixing
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   await audioCtx.resume();
 
-  // Route audio video asli lewat AudioContext
   const videoSourceNode = audioCtx.createMediaElementSource(video);
-
-  // Destination untuk recording audio
   const dest = audioCtx.createMediaStreamDestination();
 
-  // Gain untuk audio asli (biar seimbang)
   const originalGain = audioCtx.createGain();
   originalGain.gain.value = 1.0;
 
   videoSourceNode.connect(originalGain);
   originalGain.connect(dest);
 
-  // Video stream dari canvas (video-only)
   const canvasStream = canvas.captureStream(30);
-
-  // Audio stream dari dest
   const mixedAudioTrack = dest.stream.getAudioTracks()[0];
 
-  // Gabung
   const combined = new MediaStream();
   combined.addTrack(canvasStream.getVideoTracks()[0]);
   combined.addTrack(mixedAudioTrack);
 
-  // Preload SFX buffers
   showLoading('Memuat SFX...');
   const sfxBuffers = [];
   for (const f of sfxFiles) {
@@ -307,7 +293,6 @@ async function renderVideoWithSFX(sourceVideo, points) {
     sfxBuffers.push(buf);
   }
 
-  // MediaRecorder
   const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
     ? 'video/webm;codecs=vp9,opus'
     : (MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
@@ -321,7 +306,6 @@ async function renderVideoWithSFX(sourceVideo, points) {
     recorder.onstop = () => resolve(new Blob(chunks, { type: 'video/webm' }));
   });
 
-  // Reset video ke awal
   video.currentTime = 0;
   await new Promise(r => {
     const onSeeked = () => { video.removeEventListener('seeked', onSeeked); r(); };
@@ -331,7 +315,6 @@ async function renderVideoWithSFX(sourceVideo, points) {
 
   hideLoading();
 
-  // Draw loop
   let drawActive = true;
   const draw = () => {
     if (!drawActive || video.paused || video.ended) return;
@@ -339,13 +322,11 @@ async function renderVideoWithSFX(sourceVideo, points) {
     requestAnimationFrame(draw);
   };
 
-  // Mulai
   recorder.start(100);
   await video.play();
   const startTime = audioCtx.currentTime;
   draw();
 
-  // Jadwalkan SFX
   points.forEach((p, i) => {
     const buf = sfxBuffers[i % sfxBuffers.length];
     const src = audioCtx.createBufferSource();
@@ -358,7 +339,6 @@ async function renderVideoWithSFX(sourceVideo, points) {
     try { src.start(when); } catch(e) { console.warn('SFX start err', e); }
   });
 
-  // Update progress selama render
   const duration = video.duration;
   const t0 = performance.now();
   const interval = setInterval(() => {
@@ -368,7 +348,6 @@ async function renderVideoWithSFX(sourceVideo, points) {
     if (elapsed >= duration) clearInterval(interval);
   }, 200);
 
-  // Tunggu selesai
   await new Promise(resolve => {
     video.onended = resolve;
     setTimeout(resolve, (duration + 2) * 1000);
