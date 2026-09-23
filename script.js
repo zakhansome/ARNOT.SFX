@@ -96,21 +96,11 @@ function seekTo(video, time) {
       if (done) return;
       done = true;
       video.removeEventListener('seeked', onSeeked);
-      video.removeEventListener('error', finish);
       resolve();
     };
     const onSeeked = () => finish();
-
     video.addEventListener('seeked', onSeeked, { once: true });
-    video.addEventListener('error', finish, { once: true });
-
-    try {
-      video.currentTime = time;
-    } catch (e) {
-      finish();
-      return;
-    }
-
+    try { video.currentTime = time; } catch (e) { finish(); return; }
     setTimeout(finish, 1000);
   });
 }
@@ -143,7 +133,6 @@ async function extractHistograms(video, sampleFps) {
   const duration = video.duration;
   const interval = 1 / sampleFps;
   const histograms = [];
-
   const canvas = document.createElement('canvas');
   canvas.width = 160;
   canvas.height = 90;
@@ -287,51 +276,58 @@ async function process() {
   }
 }
 
-// ================= RENDER VIDEO + SFX =================
-// DIPERBAIKI: tunggu event 'playing' sebelum menghitung startTime, agar SFX
-// tidak bergeser karena latency play().
+// ================= RENDER VIDEO + SFX (CANVAS + RVFC) =================
 async function renderVideoWithSFX(sourceVideo, points) {
   const sfxVolume = parseInt($('sfxVolume').value) / 100;
 
+  // Video element baru dengan audio aktif
   const video = document.createElement('video');
   video.src = sourceVideo.src;
   video.playsInline = true;
   video.preload = 'auto';
   video.crossOrigin = 'anonymous';
+  video.muted = false;
 
   await new Promise((res, rej) => {
     video.onloadedmetadata = res;
     video.onerror = () => rej(new Error('Gagal load video untuk render'));
   });
 
-  // Canvas untuk video track
+  if (video.readyState < 2) {
+    await new Promise((res) => {
+      video.oncanplay = res;
+      setTimeout(res, 3000);
+    });
+  }
+
+  // ====== CANVAS untuk video track ======
   const canvas = document.createElement('canvas');
   canvas.width = video.videoWidth || 1280;
   canvas.height = video.videoHeight || 720;
-  const ctx = canvas.getContext('2d');
+  const ctx = canvas.getContext('2d', { alpha: false });
 
-  // Audio context
+  // Ambil FPS sumber jika tersedia, default 30
+  const sourceFps = 30;
+  const canvasStream = canvas.captureStream(sourceFps);
+
+  // ====== AUDIO ======
   const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   await audioCtx.resume();
 
   const videoSourceNode = audioCtx.createMediaElementSource(video);
   const dest = audioCtx.createMediaStreamDestination();
-  const originalGain = audioCtx.createGain();
-  originalGain.gain.value = 1.0;
+  const monitorGain = audioCtx.createGain();
+  monitorGain.gain.value = 0; // tidak monitor (biar tidak dobel di speaker)
+  videoSourceNode.connect(dest);
+  videoSourceNode.connect(monitorGain);
+  monitorGain.connect(audioCtx.destination);
 
-  videoSourceNode.connect(originalGain);
-  originalGain.connect(dest);
-  originalGain.connect(audioCtx.destination); // monitor
-
-  // Video stream dari canvas
-  const canvasStream = canvas.captureStream(30);
-
-  // Gabung video + audio
+  // Gabung video (dari canvas) + audio (dari AudioContext)
   const combined = new MediaStream();
   combined.addTrack(canvasStream.getVideoTracks()[0]);
   combined.addTrack(dest.stream.getAudioTracks()[0]);
 
-  // Preload SFX
+  // Preload SFX buffers
   showLoading('Memuat SFX...');
   const sfxBuffers = [];
   for (const f of sfxFiles) {
@@ -341,54 +337,67 @@ async function renderVideoWithSFX(sourceVideo, points) {
   }
   hideLoading();
 
-  // MediaRecorder
-  let mimeType = 'video/webm';
-  if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')) {
-    mimeType = 'video/webm;codecs=vp9,opus';
-  } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')) {
-    mimeType = 'video/webm;codecs=vp8,opus';
-  }
+  // MimeType — vp8 dulu (lebih cepat & stabil), fallback vp9
+  const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')
+    ? 'video/webm;codecs=vp8,opus'
+    : (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')
+        ? 'video/webm;codecs=vp9,opus'
+        : 'video/webm');
 
-  const recorder = new MediaRecorder(combined, { mimeType, videoBitsPerSecond: 3000000 });
+  console.log('🎥 Menggunakan mimeType:', mimeType);
+
+  const recorder = new MediaRecorder(combined, {
+    mimeType,
+    videoBitsPerSecond: 5000000,
+    audioBitsPerSecond: 192000
+  });
+
   const chunks = [];
   recorder.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
   const recordingDone = new Promise(resolve => {
     recorder.onstop = () => resolve(new Blob(chunks, { type: 'video/webm' }));
   });
 
-  // Reset video ke awal
+  // Reset ke awal
   video.currentTime = 0;
   await new Promise(r => {
     const onSeeked = () => { video.removeEventListener('seeked', onSeeked); r(); };
-    video.addEventListener('seeked', onSeeked);
+    video.addEventListener('seeked', onSeeked, { once: true });
     setTimeout(r, 500);
   });
 
-  // Draw loop
+  // ====== DRAW LOOP (RVFC + FALLBACK rAF) ======
   let drawActive = true;
-  const draw = () => {
-    if (!drawActive) return;
-    if (!video.paused && !video.ended) {
-      try { ctx.drawImage(video, 0, 0, canvas.width, canvas.height); } catch (e) {}
-    }
-    requestAnimationFrame(draw);
+  const hasRVFC = 'requestVideoFrameCallback' in video;
+
+  const drawFrame = () => {
+    try { ctx.drawImage(video, 0, 0, canvas.width, canvas.height); } catch (e) {}
   };
 
-  // ============ TIMING YANG DIPERBAIKI ============
-  // Mulai recorder DULU, lalu play video, tunggu event 'playing' baru
-  // hitung startTime dengan kompensasi latency.
-  recorder.start(100);
+  if (hasRVFC) {
+    const loop = () => {
+      if (!drawActive || video.paused || video.ended) return;
+      drawFrame();
+      video.requestVideoFrameCallback(loop);
+    };
+    video.requestVideoFrameCallback(loop);
+    console.log('🎨 Draw loop: requestVideoFrameCallback');
+  } else {
+    const loop = () => {
+      if (!drawActive || video.paused || video.ended) return;
+      drawFrame();
+      requestAnimationFrame(loop);
+    };
+    loop();
+    console.log('🎨 Draw loop: requestAnimationFrame (fallback)');
+  }
+
+  // Mulai record
+  recorder.start(200);
   await video.play();
 
-  await new Promise(resolve => {
-    if (video.currentTime > 0) return resolve();
-    video.addEventListener('playing', resolve, { once: true });
-  });
-
-  const startTime = audioCtx.currentTime - video.currentTime; // kompensasi latency start
-  draw();
-
-  // Jadwalkan SFX SETELAH startTime diketahui
+  // Jadwalkan SFX
+  const startTime = audioCtx.currentTime;
   points.forEach((p, i) => {
     const buf = sfxBuffers[i % sfxBuffers.length];
     const src = audioCtx.createBufferSource();
@@ -400,7 +409,6 @@ async function renderVideoWithSFX(sourceVideo, points) {
     const when = startTime + Math.max(0, p.time);
     try { src.start(when); } catch (e) { console.warn('SFX start err', e); }
   });
-  // ================================================
 
   // Progress
   const duration = video.duration;
@@ -412,14 +420,21 @@ async function renderVideoWithSFX(sourceVideo, points) {
     if (elapsed >= duration) clearInterval(interval);
   }, 200);
 
-  // Tunggu selesai
+  // Tunggu video selesai
   await new Promise(resolve => {
     video.onended = resolve;
-    setTimeout(resolve, (duration + 2) * 1000);
+    setTimeout(resolve, (duration + 3) * 1000);
   });
 
   clearInterval(interval);
+
+  // Gambar frame terakhir sekali lagi untuk memastikan
+  drawFrame();
   drawActive = false;
+
+  // Beri jeda kecil agar frame terakhir & audio terakhir terekam
+  await new Promise(r => setTimeout(r, 500));
+
   recorder.stop();
   video.pause();
 
