@@ -88,9 +88,7 @@ function formatTime(sec) {
   return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}.${String(ms).padStart(2,'0')}`;
 }
 
-// ================= SEEK (DIPERBAIKI) =================
-// Menggunakan event 'seeked' saja. requestVideoFrameCallback TIDAK BOLEH
-// dipakai untuk seek karena hanya terpicu saat video diputar, bukan saat seek.
+// ================= SEEK =================
 function seekTo(video, time) {
   return new Promise((resolve) => {
     let done = false;
@@ -113,7 +111,6 @@ function seekTo(video, time) {
       return;
     }
 
-    // Fallback kalau seeked tidak terpicu (video corrupt / format aneh)
     setTimeout(finish, 1000);
   });
 }
@@ -198,7 +195,6 @@ function detectShotBoundaries(histograms, sensitivity) {
 
   const candidates = distances.filter(d => d.distance > threshold && d.distance >= minDistance);
 
-  // Non-maximum suppression, window 0.4s
   const peaks = [];
   let i = 0;
   while (i < candidates.length) {
@@ -244,7 +240,6 @@ async function process() {
       video.onerror = () => rej(new Error('Gagal memuat video'));
     });
 
-    // Pastikan video siap untuk seek
     if (video.readyState < 1) {
       await new Promise((res) => {
         video.onloadeddata = res;
@@ -293,6 +288,8 @@ async function process() {
 }
 
 // ================= RENDER VIDEO + SFX =================
+// DIPERBAIKI: tunggu event 'playing' sebelum menghitung startTime, agar SFX
+// tidak bergeser karena latency play().
 async function renderVideoWithSFX(sourceVideo, points) {
   const sfxVolume = parseInt($('sfxVolume').value) / 100;
 
@@ -324,7 +321,7 @@ async function renderVideoWithSFX(sourceVideo, points) {
 
   videoSourceNode.connect(originalGain);
   originalGain.connect(dest);
-  originalGain.connect(audioCtx.destination); // supaya audio terdengar saat playback
+  originalGain.connect(audioCtx.destination); // monitor
 
   // Video stream dari canvas
   const canvasStream = canvas.captureStream(30);
@@ -377,14 +374,21 @@ async function renderVideoWithSFX(sourceVideo, points) {
     requestAnimationFrame(draw);
   };
 
-  // Start
+  // ============ TIMING YANG DIPERBAIKI ============
+  // Mulai recorder DULU, lalu play video, tunggu event 'playing' baru
+  // hitung startTime dengan kompensasi latency.
   recorder.start(100);
   await video.play();
 
-  const startTime = audioCtx.currentTime;
+  await new Promise(resolve => {
+    if (video.currentTime > 0) return resolve();
+    video.addEventListener('playing', resolve, { once: true });
+  });
+
+  const startTime = audioCtx.currentTime - video.currentTime; // kompensasi latency start
   draw();
 
-  // Jadwalkan SFX
+  // Jadwalkan SFX SETELAH startTime diketahui
   points.forEach((p, i) => {
     const buf = sfxBuffers[i % sfxBuffers.length];
     const src = audioCtx.createBufferSource();
@@ -396,6 +400,7 @@ async function renderVideoWithSFX(sourceVideo, points) {
     const when = startTime + Math.max(0, p.time);
     try { src.start(when); } catch (e) { console.warn('SFX start err', e); }
   });
+  // ================================================
 
   // Progress
   const duration = video.duration;
