@@ -358,6 +358,31 @@ function audioBufferToWavBlob(buffer) {
   return new Blob([arrBuf], { type: 'audio/wav' });
 }
 
+// ================= FETCH DENGAN PROGRESS (untuk file besar seperti ffmpeg-core.wasm) =================
+async function fetchBlobURLWithProgress(url, mimeType, onProgressMB) {
+  const res = await fetch(url);
+  if (!res.ok || !res.body) {
+    // fallback kalau streaming tidak didukung / request gagal
+    const blob = await (await fetch(url)).blob();
+    return URL.createObjectURL(blob);
+  }
+
+  const reader = res.body.getReader();
+  const chunks = [];
+  let receivedBytes = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    receivedBytes += value.length;
+    onProgressMB(receivedBytes / (1024 * 1024));
+  }
+
+  const blob = new Blob(chunks, { type: mimeType });
+  return URL.createObjectURL(blob);
+}
+
 // ================= REMUX VIA FFMPEG.WASM (tanpa re-encode video) =================
 async function getFFmpeg() {
   if (ffmpegInstance) return ffmpegInstance;
@@ -368,13 +393,21 @@ async function getFFmpeg() {
   const ffmpeg = new FFmpeg();
   const coreBaseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/esm';
   const ffmpegBaseURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.10/dist/esm';
-  await ffmpeg.load({
-    coreURL: await toBlobURL(`${coreBaseURL}/ffmpeg-core.js`, 'text/javascript'),
-    wasmURL: await toBlobURL(`${coreBaseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-    // worker.js juga HARUS di-convert ke blob URL, kalau tidak browser menolak
-    // membuat Worker dari script yang asalnya beda origin (unpkg.com vs halaman kita)
-    classWorkerURL: await toBlobURL(`${ffmpegBaseURL}/worker.js`, 'text/javascript'),
-  });
+
+  const coreURL = await fetchBlobURLWithProgress(
+    `${coreBaseURL}/ffmpeg-core.js`, 'text/javascript',
+    (mb) => showLoading(`Memuat ffmpeg-core.js... ${mb.toFixed(1)} MB`)
+  );
+  const wasmURL = await fetchBlobURLWithProgress(
+    `${coreBaseURL}/ffmpeg-core.wasm`, 'application/wasm',
+    (mb) => showLoading(`Memuat ffmpeg-core.wasm... ${mb.toFixed(1)} MB (file terbesar, ~30MB)`)
+  );
+  // worker.js juga HARUS di-convert ke blob URL, kalau tidak browser menolak
+  // membuat Worker dari script yang asalnya beda origin (unpkg.com vs halaman kita)
+  const classWorkerURL = await toBlobURL(`${ffmpegBaseURL}/worker.js`, 'text/javascript');
+
+  showLoading('Menyiapkan ffmpeg...');
+  await ffmpeg.load({ coreURL, wasmURL, classWorkerURL });
 
   ffmpegInstance = ffmpeg;
   hideLoading();
